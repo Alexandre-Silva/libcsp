@@ -52,6 +52,7 @@ def options(ctx):
 	gr.add_option('--enable-if-i2c', action='store_true', help='Enable I2C interface')
 	gr.add_option('--enable-if-kiss', action='store_true', help='Enable KISS/RS.232 interface')
 	gr.add_option('--enable-if-can', action='store_true', help='Enable CAN interface')
+	gr.add_option('--enable-if-ax25', action='store_true', help='Enable AX.25 interface')
 	
 	# Drivers
 	gr.add_option('--with-driver-can', default=None, metavar='CHIP', help='Build CAN driver. [socketcan, at91sam7a1, at91sam7a3 or at90can128]')
@@ -146,6 +147,8 @@ def configure(ctx):
 		ctx.env.append_unique('FILES_CSP', 'src/interfaces/csp_if_i2c.c')
 	if ctx.options.enable_if_kiss:
 		ctx.env.append_unique('FILES_CSP', 'src/interfaces/csp_if_kiss.c')
+	if ctx.options.enable_if_ax25:
+		ctx.env.append_unique('FILES_CSP', 'src/interfaces/csp_if_ax25.c')
 
 	# Store configuration options
 	ctx.env.ENABLE_BINDINGS = ctx.options.enable_bindings
@@ -218,6 +221,8 @@ def build(ctx):
 			ctx.install_files('${PREFIX}/include/csp/interfaces', 'include/csp/interfaces/csp_if_i2c.h')
 		if 'src/interfaces/csp_if_kiss.c' in ctx.env.FILES_CSP:
 			ctx.install_files('${PREFIX}/include/csp/interfaces', 'include/csp/interfaces/csp_if_kiss.h')
+		if 'src/interfaces/csp_if_ax25.c' in ctx.env.FILES_CSP:
+			ctx.install_files('${PREFIX}/include/csp/interfaces', 'include/csp/interfaces/csp_if_ax25.h')
 		if 'src/drivers/usart/usart_{0}.c'.format(ctx.options.with_driver_usart) in ctx.env.FILES_CSP:
 			ctx.install_as('${PREFIX}/include/csp/drivers/usart.h', 'include/csp/drivers/usart.h')
 
