@@ -79,7 +79,7 @@ int csp_ax25_set_call(char *ax25_port) {
   }
 
   /* fill the g_src structure */
-  memset(&g_src, 0, sizeof g_src);
+  memset(&g_src, 0, sizeof(g_src));
   if ((g_slen = ax25_aton(g_localcall, &g_src)) == -1) {
     perror("Unable to convert source callsign \n");
     return CSP_ERR_DRIVER;
@@ -105,13 +105,13 @@ int csp_ax25_start() {
    * 	http://www.tapr.org/pub_ax25.html#2.2.4
    **/
   if ((g_txsock = socket(AF_AX25, SOCK_DGRAM, 0xF0)) == -1) {
-    perror("rxsocket() error:");
+    perror("libcsp:if_ax25:rxsocket() error:");
     return CSP_ERR_DRIVER;
   }
 
   /* bind local callsign to our g_txsock */
   if (bind(g_txsock, (struct sockaddr *)&g_src, g_slen) == -1) {
-    perror("bind() error: ");
+    perror("libcsp:if_ax25:bind() error:");
     return CSP_ERR_DRIVER;
   }
 
@@ -139,9 +139,9 @@ int csp_ax25_start() {
 int csp_ax25_stop() { return CSP_ERR_NONE; }
 
 CSP_DEFINE_TASK(ax25_rx) {
-  struct full_sockaddr_ax25 g_src;
+  struct full_sockaddr_ax25 src;
   int size;
-  socklen_t srcs = sizeof(g_src);
+  socklen_t srcs = sizeof(src);
   int payload_s;
   char buffer[csp_if_ax25.mtu];
   csp_packet_t *packet = NULL;
@@ -153,7 +153,7 @@ CSP_DEFINE_TASK(ax25_rx) {
     /* hold for incomming packets */
     size = recvfrom(g_rxsock, buffer,
                     csp_if_ax25.mtu + CSP_HEADER_LENGTH + AX25_HEADER_S, 0,
-                    (struct sockaddr *)&g_src, &srcs);
+                    (struct sockaddr *)&src, &srcs);
     if (size == -1) {
       perror("Error in AX.25 frame reception..\n");
       fprintf(stderr, "error in ax.25 fram reception..\n");
@@ -188,9 +188,9 @@ CSP_DEFINE_TASK(ax25_rx) {
      * the binded port.
      */
     if (packet->id.dst != my_address) {
-      //			printf("\nWARN: CSP Packet dropped: DST
-      // CSP_ID[%d] differ FROM local ADDR[%d] \n", packet->id.dst,
-      // my_address);
+      csp_log_warn(
+          "CSP Packet dropped: DST CSP_ID[%d] differ FROM local ADDR[%d]\n",
+          packet->id.dst, my_address);
       csp_buffer_free(packet);
     } else {
       /* update stats */
@@ -201,6 +201,7 @@ CSP_DEFINE_TASK(ax25_rx) {
                      NULL);  // NULL -> Called from task (csp_interface.h)
     }
   }
+  printf("asdasdaad\n");
   return CSP_TASK_RETURN;
 }
 
@@ -214,6 +215,10 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
   /* wich callsign is associated with this CSP ID ? */
   destcall = csp_ax25_map_callsign(packet->id.dst);
 
+  if (csp_if_ax25.mtu < packet->length) {
+    csp_log_error("packet->length is bigger than txbuf\n");
+    exit(-1);
+  }
   /* fill the dest ax25 structure */
   if ((dlen = ax25_aton(destcall, &dest)) == -1) {
     fprintf(stderr, "Unable to convert destination callsign '%s'\n", destcall);
@@ -230,7 +235,7 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
   //	printf("#################################\n");
 
   /* prepare (alloc&clean) transmition buffer */
-  /* txbuf = (char *)malloc(packet->length + CSP_HEADER_LENGTH); */
+  /* char *txbuf = (char *)malloc(packet->length + CSP_HEADER_LENGTH); */
   /* if (txbuf == NULL) { */
   /*   perror("Unable to alloc AX.25 outgoing buffer"); */
   /*   return CSP_ERR_TX; */
@@ -255,7 +260,7 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
   /* release memory... */
   csp_buffer_free(packet);
   /* free(txbuf); */
-  free(destcall);
+  csp_free(destcall);
   return CSP_ERR_NONE;
 }
 
