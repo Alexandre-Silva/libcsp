@@ -16,6 +16,11 @@
 
 extern csp_iface_t csp_if_ax25;
 
+/** CSP Host addr to  for layer 2 -- AX25 callsign table
+ * Never use this directly, only interact with it using.
+ * Only leaving it public for debugging convenience.
+ */
+extern char *csp_ax25_rtable[];
 
 
 #define AX25_MAX_LEN AX25_HEADER_I_S + CSP_HEADER_LENGTH + csp_if_ax25.mtu
@@ -73,8 +78,18 @@ int csp_ax25_stop(void);
  * previous mapping.
  * @returns CSP_ERR_NONE on success, CSP_ERR_DRIVER on failure
  */
-int csp_ax25_rtable_set(uint8_t csp_addr, char *ax25_call);
-char *csp_ax25_map_callsign(int call);
+int csp_ax25_ctable_set(uint8_t csp_addr, char *ax25_call);
+
+/** Returns the ax25 callsign associated with the host of csp_addr
+ *
+ * @see csp_ax25_ctable_set()
+ *
+ * @param[in] csp_addr The csp addr to serve as keys in csp_ax25_map_callsign.
+ * @returns A char* which the caller must then free. If the addr has no assigned
+ * callsign, NULL is returned instead.
+ */
+char *csp_ax25_ctable_get(uint8_t csp_addr);
+
 char *csp_ax25_localcall(char *ax25_port);
 
 int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
