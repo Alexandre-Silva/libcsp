@@ -66,52 +66,53 @@ int csp_ax25_set_call(char *ax25_port) {
 
   /* load ports from configuration */
   if (ax25_config_load_ports() == 0) {
-    fprintf(stderr, "No AX.25 ports defined\n");
+    csp_log_error("set_call(), No AX.25 ports defined\n");
     return CSP_ERR_DRIVER;
   }
 
   /* get local callsign */
   g_localcall = csp_ax25_localcall(ax25_port);
 
-  if (g_localcall == NULL) {
-    fprintf(stderr, "Error reading local callsign..");
+  /* get local callsign */
+  if ((g_localcall = ax25_config_get_addr(ax25_port)) == NULL) {
+    csp_log_error("set_call(), invalid ax.25 port:%s\n", ax25_port);
     return CSP_ERR_DRIVER;
   }
 
   /* fill the g_src structure */
   memset(&g_src, 0, sizeof(g_src));
   if ((g_slen = ax25_aton(g_localcall, &g_src)) == -1) {
-    perror("Unable to convert source callsign \n");
+    csp_log_error("set_call(), Unable to convert source callsign \n");
     return CSP_ERR_DRIVER;
   }
 
   /* let's validate our local call */
   if (ax25_aton_entry(g_localcall, localshifted) == -1) {
-    perror("Can't shift local callsign: \n");
+    csp_log_error("set_call(), Can't shift local callsign: \n");
     return CSP_ERR_DRIVER;
   }
 
   if (ax25_validate(localshifted) == 0) {
-    fprintf(stderr, "Local callsign not valid\n");
+    csp_log_error("set_call(), Local callsign not valid\n");
     return CSP_ERR_DRIVER;
   }
 
   return CSP_ERR_NONE;
 }
 
-int csp_ax25_start() {
+int csp_ax25_start(void) {
   /* Prepare tx socket
    * 	PID=0xF0 =>  l3 protocol not specified..
    * 	http://www.tapr.org/pub_ax25.html#2.2.4
    **/
   if ((g_txsock = socket(AF_AX25, SOCK_DGRAM, 0xF0)) == -1) {
-    perror("libcsp:if_ax25:rxsocket() error:");
+    perror("start(), rxsocket() error");
     return CSP_ERR_DRIVER;
   }
 
   /* bind local callsign to our g_txsock */
   if (bind(g_txsock, (struct sockaddr *)&g_src, g_slen) == -1) {
-    perror("libcsp:if_ax25:bind() error:");
+    perror("start(), bind() error");
     return CSP_ERR_DRIVER;
   }
 
@@ -125,7 +126,7 @@ int csp_ax25_start() {
    *
    **/
   if ((g_rxsock = socket(PF_PACKET, SOCK_PACKET, htons(ETH_P_AX25))) == -1) {
-    perror("socket() error: ");
+    perror("start(), socket() error");
     return CSP_ERR_DRIVER;
   }
 
@@ -136,7 +137,7 @@ int csp_ax25_start() {
   return CSP_ERR_NONE;
 }
 
-int csp_ax25_stop() { return CSP_ERR_NONE; }
+int csp_ax25_stop(void) { return CSP_ERR_NONE; }
 
 CSP_DEFINE_TASK(ax25_rx) {
   struct full_sockaddr_ax25 src;
@@ -167,8 +168,7 @@ CSP_DEFINE_TASK(ax25_rx) {
     // packet = csp_buffer_get(csp_if_ax25.mtu);
     packet = csp_buffer_get(sizeof(csp_packet_t) + payload_s);
     if (packet == NULL) {
-      perror("Cannot allocate packet memory: ");
-      fprintf(stderr, "cannot allocate packet mem");
+      csp_log_warn("ax25_rx: Cannot allocate packet memory\n");
       continue;
     }
 
@@ -234,13 +234,6 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
   // packet->id.dst, packet->id.dport, destcall);
   //	printf("#################################\n");
 
-  /* prepare (alloc&clean) transmition buffer */
-  /* char *txbuf = (char *)malloc(packet->length + CSP_HEADER_LENGTH); */
-  /* if (txbuf == NULL) { */
-  /*   perror("Unable to alloc AX.25 outgoing buffer"); */
-  /*   return CSP_ERR_TX; */
-  /* } */
-
   memset(txbuf, 0, CSP_HEADER_LENGTH + packet->length);
 
   /* fill the buffer with packet header (in network format) */
@@ -252,14 +245,13 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
 
   /* send the CSP packet inside our AX.25 frame through g_txsock FD */
   if (sendto(g_txsock, txbuf, packet->length + CSP_HEADER_LENGTH, 0,
-             (struct sockaddr *)&dest, dlen) == -1) {
-    perror("Unable to send AX.25 frame: \n");
+             (struct sockaddr *)&dest_addr, sizeof(dest_addr)) == -1) {
+    csp_log_error("ax25_tx(), Unable to send AX.25 frame: \n");
     return CSP_ERR_TX;
   }
 
   /* release memory... */
   csp_buffer_free(packet);
-  /* free(txbuf); */
   csp_free(destcall);
   return CSP_ERR_NONE;
 }
@@ -267,14 +259,14 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
 int csp_ax25_rtable_set(uint8_t csp_addr, char *ax25_call) {
   if (csp_addr > CSP_ID_HOST_MAX + 1) {
     csp_log_error(
-        "Failed to set csp_ax25_rtable mapping because the provided csp_addr "
-        "is invalid.");
+        "Failed to set csp_ax25_ctable mapping because the provided csp_addr "
+        "is invalid.\n");
     return CSP_ERR_DRIVER;
   }
 
-  char *old_call = csp_ax25_rtable[csp_addr];
-  csp_log_info("csp_ax25_rtable: %d --> %s , (was: %s)", csp_addr, old_call,
-               ax25_call);
+  char *old_call = csp_ax25_ctable[csp_addr];
+  csp_log_info("csp_ax25_ctable: %d --> %s , (was: %s)\n", csp_addr, ax25_call,
+               old_call);
   if (old_call != NULL) csp_free(old_call);
   csp_ax25_rtable[csp_addr] = ax25_call;
 
@@ -301,5 +293,6 @@ char *csp_ax25_localcall(char *ax25_port) {
     fprintf(stderr, "Invalid AX.25 port [ %s ]\n", ax25_port);
     return NULL;
   }
+
   return ret;
 }

@@ -35,7 +35,7 @@ int csp_ax25_init(char *ax25_port);
  *
  * @param[in] ax25_port The string with the ax25 callsign port name. (because a
  * ax25 callsign also has a port name)
- * @returns: CSP_ERROR_NONE on success, CSP_ERROR_DRIVER if an error ocurred.
+ * @returns: CSP_ERROR_NONE on success, CSP_ERR_DRIVER if an error ocurred.
  */
 int csp_ax25_set_call(char *ax25_port);
 
@@ -44,7 +44,7 @@ int csp_ax25_set_call(char *ax25_port);
  * and starts rxtask.
  * @returns: CSP_ERROR_NONE on success, CSP_ERROR_DRIVER if an error ocurred.
  */
-int csp_ax25_start();
+int csp_ax25_start(void);
 
 /** Stops the csp_ax25 layer
  * This then frees the callsign to be used for other purposes.
@@ -53,7 +53,7 @@ int csp_ax25_start();
  *
  * @returns: CSP_ERROR_NONE on success, CSP_ERROR_DRIVER if an error ocurred.
  */
-int csp_ax25_stop();
+int csp_ax25_stop(void);
 
 /** Sets a static mapping between a csp address and a ax25 callsign.
  *
@@ -63,7 +63,9 @@ int csp_ax25_stop();
  *
  * @param[in] csp_addr The csp addr to serve as keys in csp_ax25_map_callsign.
  * @param[in] ax25_call The callsign to use for the csp_addr (The caller *must*
- * discard this pointer). Can be NULL to delete a previous mapping.
+ * discard this point, a copy is made internally). Can be NULL to delete a
+ * previous mapping.
+ * @returns CSP_ERR_NONE on success, CSP_ERR_DRIVER on failure
  */
 int csp_ax25_rtable_set(uint8_t csp_addr, char *ax25_call);
 char *csp_ax25_map_callsign(int call);
