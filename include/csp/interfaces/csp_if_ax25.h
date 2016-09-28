@@ -5,14 +5,20 @@
 #include <csp/csp_interface.h>
 #include <stdint.h>
 
-#define PORT 10           // PriSIS listen port....
-#define PORT_F 9          // listen port for photo service
-#define SAT_ADDR 1        // CSP ID
-#define GS_ADDR 11        // CSP ID
-#define AX25_HEADER_S 17  // 17 bytes for header
-#define AX25_TAIL_S 3     // 3 bytes for tail
+// sizes of various fields
+#define KISS_HEADER_S 1                    //
+#define AX25_NCALL_S sizeof(ax25_address)  // callsign in network format
+#define AX25_CONTROL_S 1                   // control field
+#define AX25_PID_S 1                       // Protocol ID (I frames only)
+#define AX25_HEADER_I_S \
+  (KISS_HEADER_S + AX25_NCALL_S * 2 + AX25_CONTROL_S + AX25_PID_S)
+#define AX25_TAIL_S 3
 
 extern csp_iface_t csp_if_ax25;
+
+
+
+#define AX25_MAX_LEN AX25_HEADER_I_S + CSP_HEADER_LENGTH + csp_if_ax25.mtu
 
 /** Intializes the csp<->ax25 interface
  * Registers the ax25 interface in libcsp and sets the callsign, via

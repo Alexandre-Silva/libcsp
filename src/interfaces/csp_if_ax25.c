@@ -149,12 +149,11 @@ CSP_DEFINE_TASK(ax25_rx) {
 
   while (1) {
     /* clean the receive buffer */
-    memset(buffer, 0, csp_if_ax25.mtu + CSP_HEADER_LENGTH + AX25_HEADER_S);
+    memset(buffer, 0, AX25_MAX_LEN);
 
     /* hold for incomming packets */
-    size = recvfrom(g_rxsock, buffer,
-                    csp_if_ax25.mtu + CSP_HEADER_LENGTH + AX25_HEADER_S, 0,
-                    (struct sockaddr *)&src, &srcs);
+    size = recvfrom(g_rxsock, buffer, AX25_MAX_LEN, 0, (struct sockaddr *)&src,
+                    &srcs);
     if (size == -1) {
       perror("Error in AX.25 frame reception..\n");
       fprintf(stderr, "error in ax.25 fram reception..\n");
@@ -162,7 +161,7 @@ CSP_DEFINE_TASK(ax25_rx) {
     }
 
     /* offset eval */
-    payload_s = size - AX25_HEADER_S - CSP_HEADER_LENGTH;
+    payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
 
     /* alloc new packet */
     // packet = csp_buffer_get(csp_if_ax25.mtu);
@@ -174,11 +173,11 @@ CSP_DEFINE_TASK(ax25_rx) {
 
     /* fill the packet with incomming CSP data */
     /* copy packet header and convert it into host endianess */
-    memcpy(&(packet->id.ext), &(buffer[AX25_HEADER_S]), CSP_HEADER_LENGTH);
+    memcpy(&(packet->id.ext), &(buffer[AX25_HEADER_I_S]), CSP_HEADER_LENGTH);
     packet->id.ext = csp_ntoh32(packet->id.ext);
 
     /* set the packet payload and size*/
-    memcpy(&(packet->data), &(buffer[CSP_HEADER_LENGTH + AX25_HEADER_S]),
+    memcpy(&(packet->data), &(buffer[CSP_HEADER_LENGTH + AX25_HEADER_I_S]),
            payload_s);
     packet->length = payload_s;
 
