@@ -28,8 +28,9 @@ char *csp_ax25_map_callsign(int call);
 CSP_DEFINE_TASK(ax25_rx);
 
 /* Globals (but within this file only) */
-static int g_txsock, g_rxsock;
-static char *g_localcall;
+static int g_txsock = 0, g_rxsock = 0;
+static char *g_localcall = NULL;
+static ax25_address g_localcall_addr;
 static csp_thread_handle_t g_handle_rx;
 static struct full_sockaddr_ax25 g_src;
 static int g_slen;
@@ -97,6 +98,9 @@ int csp_ax25_set_call(char *ax25_port) {
     return CSP_ERR_DRIVER;
   }
 
+
+  ax25_aton_entry(g_localcall, g_localcall_addr.ax25_call);
+
   return CSP_ERR_NONE;
 }
 
@@ -158,6 +162,21 @@ CSP_DEFINE_TASK(ax25_rx) {
       perror("Error in AX.25 frame reception..\n");
       fprintf(stderr, "error in ax.25 fram reception..\n");
       return NULL;
+    }
+
+    ax25_address *dest_call_p, *src_call_p;
+    dest_call_p = (ax25_address *)&buffer[KISS_HEADER_S];
+    src_call_p = (ax25_address *)&buffer[KISS_HEADER_S + AX25_NCALL_S];
+
+    char dest_s[7], src_s[7];
+    memcpy(dest_s, ax25_ntoa(dest_call_p), sizeof(dest_s));
+    memcpy(src_s, ax25_ntoa(src_call_p), sizeof(src_s));
+
+    csp_log_info("ax25_rx: recv frame dest:%s src:%s\n", dest_s, src_s);
+
+    if (ax25_cmp(dest_call_p, &g_localcall_addr) != 0) {
+      csp_log_info("ax25_rx: received frame's dest callsign != my callsign.\n");
+      continue;
     }
 
     /* offset eval */
