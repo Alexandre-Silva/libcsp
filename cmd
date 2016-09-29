@@ -1,3 +1,5 @@
+#!/bin/bash
+
 args=( "$@" )
 
 if [[ ${#args} -eq 0 ]]; then
