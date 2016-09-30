@@ -37,11 +37,11 @@ csp_iface_t csp_if_ax25 = {.name = "AX.25",
                            .mtu = (255 - sizeof(csp_id_t))};
 
 /* This array maps csp host addresses to ax25 callsigns. */
-char *csp_ax25_ctable[CSP_ID_HOST_MAX + 1];
+/* Inside this file, the read directly in csp_ax25_tx() and written to in
+ * ax25_rx_task */
+ax25_address csp_ax25_ctable[CSP_ID_HOST_MAX + 1];
 
 int csp_ax25_init(char *ax25_port) {
-  /* regist the AX.25 interface into CSP stack */
-  csp_route_add_if(&csp_if_ax25);
   printf(
       "\n\n\
 			:::::::::::::::::::::::::::: INFO ::::::::::::::::::::::::::::::\n\
@@ -50,12 +50,17 @@ int csp_ax25_init(char *ax25_port) {
 			For more information please visit: http://istnanosat.ist.utl.pt\n\
 			::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::\n");
 
+  /* register the AX.25 interface into CSP stack */
+  csp_route_add_if(&csp_if_ax25);
+
+  /* inits and veirfies local callsign */
   if (csp_ax25_set_call(ax25_port) != CSP_ERR_NONE) return CSP_ERR_DRIVER;
 
   /* init csp_ax25_ctable */
-  for (int i = 0; i < CSP_ID_HOST_MAX + 1; i++) csp_ax25_ctable[i] = NULL;
+  bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable));
+  if (csp_ax25_ctable_set(my_address, g_localcall)) return CSP_ERR_DRIVER;
 
-  return csp_ax25_ctable_set(my_address, g_localcall);
+  return CSP_ERR_NONE;
 }
 
 int csp_ax25_set_call(char *ax25_port) {
@@ -174,7 +179,6 @@ CSP_DEFINE_TASK(ax25_rx) {
     char dest_s[7], src_s[7];
     memcpy(dest_s, ax25_ntoa(dest_call_p), sizeof(dest_s));
     memcpy(src_s, ax25_ntoa(src_call_p), sizeof(src_s));
-
     csp_log_info("ax25_rx: recv frame dest:%s src:%s\n", dest_s, src_s);
 
     if (ax25_cmp(dest_call_p, &g_localcall_addr) != 0) {
@@ -197,6 +201,15 @@ CSP_DEFINE_TASK(ax25_rx) {
     /* copy packet header and convert it into host endianess */
     memcpy(&(packet->id.ext), &(buffer[AX25_HEADER_I_S]), CSP_HEADER_LENGTH);
     packet->id.ext = csp_ntoh32(packet->id.ext);
+
+    if (packet->id.src > CSP_ID_HOST_MAX || packet->id.dst > CSP_ID_HOST_MAX) {
+      csp_free(packet);
+      csp_log_error("rx_task: received a packet with invalid control field.");
+      continue;
+    }
+
+    /* update ax25 call sign table */
+    memcpy(&csp_ax25_ctable[packet->id.src], src_call_p, sizeof(ax25_address));
 
     /* set the packet payload and size*/
     memcpy(&(packet->data), &(buffer[CSP_HEADER_LENGTH + AX25_HEADER_I_S]),
@@ -227,15 +240,6 @@ CSP_DEFINE_TASK(ax25_rx) {
 
 int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
                 uint32_t timeout) {
-  char txbuf[csp_if_ax25.mtu + CSP_HEADER_LENGTH];
-
-  /* wich callsign is associated with this CSP ID ? */
-  char *destcall = csp_ax25_ctable_get(packet->id.dst);
-  if (destcall == NULL) {
-    csp_log_warn("ax25_tx(), no AX25 callsign for csp_addr:%d\n", packet->id.dst);
-    return CSP_ERR_DRIVER;
-  }
-
   if (csp_if_ax25.mtu < packet->length) {
     csp_log_error("ax25_tx(), packet->length is bigger than txbuf\n");
     exit(-1);
@@ -245,12 +249,8 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
   bzero((char *)&dest_addr, sizeof(dest_addr));
   dest_addr.sax25_family = AF_AX25;
   dest_addr.sax25_ndigis = 0;
-
-  /* fill ax25 structure's callsign (in network format) */
-  if (ax25_aton_entry(destcall, (char *)&dest_addr.sax25_call) == -1) {
-    fprintf(stderr, "Unable to convert destination callsign '%s'\n", destcall);
-    return CSP_ERR_DRIVER;
-  }
+  memcpy(&dest_addr.sax25_call, &csp_ax25_ctable[packet->id.dst],
+         sizeof(ax25_address));
 
   //	printf("\n######## I will send the packet: \n");
   //	printf("-> Payload is: %s\n", packet->data);
@@ -261,7 +261,8 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
   // packet->id.dst, packet->id.dport, destcall);
   //	printf("#################################\n");
 
-  memset(txbuf, 0, CSP_HEADER_LENGTH + packet->length);
+  char txbuf[csp_if_ax25.mtu + CSP_HEADER_LENGTH];
+  bzero(txbuf, CSP_HEADER_LENGTH + packet->length);
 
   /* fill the buffer with packet header (in network format) */
   packet->id.ext = csp_hton32(packet->id.ext);
@@ -279,23 +280,22 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
 
   /* release memory... */
   csp_buffer_free(packet);
-  csp_free(destcall);
   return CSP_ERR_NONE;
 }
 
 int csp_ax25_ctable_set(uint8_t csp_addr, char *ax25_call) {
-  if (csp_addr > CSP_ID_HOST_MAX + 1) {
+  if (csp_addr > CSP_ID_HOST_MAX) {
     csp_log_error(
-        "Failed to set csp_ax25_ctable mapping because the provided csp_addr "
-        "is invalid.\n");
+        "ctable_set(): supplied csp_addr:%d is larger than "
+        "CSP_ID_HOST_MAX\n");
     return CSP_ERR_DRIVER;
   }
 
-  char *old_call = csp_ax25_ctable[csp_addr];
+  char *old_call = ax25_ntoa(&csp_ax25_ctable[csp_addr]);
   csp_log_info("csp_ax25_ctable: %d --> %s , (was: %s)\n", csp_addr, ax25_call,
                old_call);
-  if (old_call != NULL) csp_free(old_call);
-  csp_ax25_ctable[csp_addr] = ax25_call;
+
+  ax25_aton_entry(ax25_call, csp_ax25_ctable[csp_addr].ax25_call);
 
   return CSP_ERR_NONE;
 }
@@ -309,7 +309,7 @@ char *csp_ax25_ctable_get(uint8_t csp_addr) {
   }
 
   char *ret = NULL;
-  char *call = csp_ax25_ctable[csp_addr];
+  char *call = ax25_ntoa(&csp_ax25_ctable[csp_addr]);
   if (call != NULL) {
     size_t call_len = strlen(call) + 1;  // str size + '\0' char
     ret = csp_malloc(call_len);

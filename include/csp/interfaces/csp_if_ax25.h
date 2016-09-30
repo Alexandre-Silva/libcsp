@@ -4,6 +4,7 @@
 #include <csp/csp.h>
 #include <csp/csp_interface.h>
 #include <stdint.h>
+#include <netax25/ax25.h>
 
 // sizes of various fields
 #define KISS_HEADER_S 1                    //
@@ -20,7 +21,7 @@ extern csp_iface_t csp_if_ax25;
  * Never use this directly, only interact with it using.
  * Only leaving it public for debugging convenience.
  */
-extern char *csp_ax25_rtable[];
+extern ax25_address csp_ax25_rtable[];
 
 
 #define AX25_MAX_LEN AX25_HEADER_I_S + CSP_HEADER_LENGTH + csp_if_ax25.mtu
@@ -89,8 +90,6 @@ int csp_ax25_ctable_set(uint8_t csp_addr, char *ax25_call);
  * callsign, NULL is returned instead.
  */
 char *csp_ax25_ctable_get(uint8_t csp_addr);
-
-char *csp_ax25_localcall(char *ax25_port);
 
 int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
                 uint32_t timeout);
