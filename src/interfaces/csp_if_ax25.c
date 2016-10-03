@@ -17,6 +17,8 @@
 #include <netax25/axconfig.h>
 #include <netax25/axlib.h>
 
+#include <pthread.h>  // only while csp_thread_join is not implemented
+
 /* Private functions */
 
 /* Functions used by rx thread/task */
@@ -149,14 +151,34 @@ int csp_ax25_start(void) {
   return CSP_ERR_NONE;
 }
 
-int csp_ax25_stop(void) { return CSP_ERR_NONE; }
+int csp_ax25_stop(void) {
+  if (close(g_rxsock) != 0) {
+    csp_log_error("Failed to succesfully close CSP's AX25 layer rx socket.\n");
+    return CSP_ERR_DRIVER;
+  }
+
+  if (close(g_txsock) != 0) {
+    csp_log_error("Failed to succesfully close CSP's AX25 layer tx socket.\n");
+    return CSP_ERR_DRIVER;
+  }
+
+  /* csp_thread_join(&ax25_rx); */  // join is not yet implemented
+  if (pthread_join(g_handle_rx, NULL) != 0) {
+    csp_log_error("Failed to succesfully terminate CSP:AX25 rx task.\n");
+    return CSP_ERR_DRIVER;
+  }
+
+  printf("Joined rx task\n");
+
+  return CSP_ERR_NONE;
+}
 
 CSP_DEFINE_TASK(ax25_rx) {
   struct full_sockaddr_ax25 src;
   int size;
   socklen_t srcs = sizeof(src);
   int payload_s;
-  char buffer[csp_if_ax25.mtu];
+  char buffer[AX25_MAX_LEN];
   csp_packet_t *packet = NULL;
 
   while (1) {
