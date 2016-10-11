@@ -6,7 +6,7 @@ if [[ ${#args} -eq 0 ]]; then
     args=( configure build )
 fi
 
-WAFDIR="" waf "${args[@]}" \
+WAFDIR="" ./waf "${args[@]}" \
       --install-csp \
       --enable-rdp --enable-hmac --enable-crc32 \
       --enable-if-ax25 --enable-if-kiss \

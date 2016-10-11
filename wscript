@@ -1,9 +1,9 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # encoding: utf-8
 
 # Cubesat Space Protocol - A small network-layer protocol designed for Cubesats
 # Copyright (C) 2012 GomSpace ApS (http://www.gomspace.com)
-# Copyright (C) 2012 AAUSAT3 Project (http://aausat3.space.aau.dk) 
+# Copyright (C) 2012 AAUSAT3 Project (http://aausat3.space.aau.dk)
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -30,7 +30,7 @@ out	= 'build'
 def options(ctx):
 	# Load GCC options
 	ctx.load('gcc')
-	
+
 	ctx.add_option('--toolchain', default='', help='Set toolchain prefix')
 
 	# Set libcsp options
@@ -49,18 +49,18 @@ def options(ctx):
 	gr.add_option('--enable-bindings', action='store_true', help='Enable Python bindings')
 	gr.add_option('--enable-examples', action='store_true', help='Enable examples')
 
-	# Interfaces	
+	# Interfaces
 	gr.add_option('--enable-if-i2c', action='store_true', help='Enable I2C interface')
 	gr.add_option('--enable-if-kiss', action='store_true', help='Enable KISS/RS.232 interface')
 	gr.add_option('--enable-if-can', action='store_true', help='Enable CAN interface')
 	gr.add_option('--enable-if-ax25', action='store_true', help='Enable AX.25 interface')
-	
+
 	# Drivers
 	gr.add_option('--with-driver-can', default=None, metavar='CHIP', help='Build CAN driver. [socketcan, at91sam7a1, at91sam7a3 or at90can128]')
 	gr.add_option('--with-driver-usart', default=None, metavar='DRIVER', help='Build USART driver. [windows, linux, None]')
 	gr.add_option('--with-drivers', metavar='PATH', default='../libgomspace/include', help='Set path to Driver header files')
 
-	# OS	
+	# OS
 	gr.add_option('--with-os', metavar='OS', default='posix', help='Set operating system. Must be either \'posix\', \'macosx\', \'windows\' or \'freertos\'')
 	gr.add_option('--with-freertos', metavar='PATH', default='../libgomspace/include', help='Set path to FreeRTOS header files')
 
@@ -88,7 +88,7 @@ def configure(ctx):
 
 	if not ctx.options.with_loglevel in ('error', 'warn', 'info', 'debug'):
 		ctx.fatal('--with-loglevel must be either \'error\', \'warn\', \'info\' or \'debug\'')
-	
+
 	# Setup and validate toolchain
 	ctx.env.CC = ctx.options.toolchain + 'gcc'
 	ctx.env.AR = ctx.options.toolchain + 'ar'
@@ -105,7 +105,7 @@ def configure(ctx):
 	# Setup CFLAGS
 	if (len(ctx.env.CFLAGS) == 0):
 		ctx.env.prepend_value('CFLAGS', ['-Os','-Wall', '-g', '-std=gnu99'])
-	
+
 	# Setup extra includes
 	ctx.env.append_unique('INCLUDES_CSP', ['include'] + ctx.options.includes.split(','))
 
@@ -115,13 +115,13 @@ def configure(ctx):
 	# Check for recursion
 	if ctx.path == ctx.srcnode:
 		ctx.options.install_csp = True
-	
-	# Add FreeRTOS 
+
+	# Add FreeRTOS
 	if ctx.options.with_os == 'freertos':
 		ctx.env.append_unique('INCLUDES_CSP', ctx.options.with_freertos)
 	elif ctx.options.with_os == 'windows':
 		ctx.env.append_unique('CFLAGS', ['-D_WIN32_WINNT=0x0600'])
-	
+
 	# Store OS as env variable
 	ctx.env.append_unique('OS', ctx.options.with_os)
 
@@ -129,7 +129,7 @@ def configure(ctx):
 	ctx.define_cond('CSP_POSIX', ctx.options.with_os == 'posix')
 	ctx.define_cond('CSP_WINDOWS', ctx.options.with_os == 'windows')
 	ctx.define_cond('CSP_MACOSX', ctx.options.with_os == 'macosx')
-		
+
 	# Add Eternal Drivers
 	if ctx.options.with_drivers:
 		ctx.env.append_unique('INCLUDES_CSP', ctx.options.with_drivers)
@@ -141,7 +141,7 @@ def configure(ctx):
 	# Add USART driver
 	if ctx.options.with_driver_usart != None:
 		ctx.env.append_unique('FILES_CSP', 'src/drivers/usart/usart_{0}.c'.format(ctx.options.with_driver_usart))
-		
+
 	# Interfaces
 	if ctx.options.enable_if_can:
 		ctx.env.append_unique('FILES_CSP', 'src/interfaces/csp_if_can.c')
