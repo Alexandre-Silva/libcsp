@@ -1,6 +1,10 @@
 #ifndef _CSP_IF_AX25_H_
 #define _CSP_IF_AX25_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <csp/csp.h>
 #include <csp/csp_interface.h>
 #include <stdint.h>
@@ -112,5 +116,9 @@ char *csp_ax25_rx(void);
 /* errors */
 #define SEMANTIC_ERR -1 /* app semantic error */
 #define NOT_IMP -2      /* function not implemented */
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* _CSP_IF_AX25_H_ */
