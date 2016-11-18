@@ -1,4 +1,6 @@
+#include <errno.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -29,6 +31,7 @@ static int g_txsock = 0, g_rxsock = 0;
 static char *g_localcall = NULL;
 static ax25_address g_localcall_addr;
 static csp_thread_handle_t g_handle_rx;
+static bool g_rx_stop_flag = false;
 static struct full_sockaddr_ax25 g_src;
 static int g_slen;
 
@@ -144,6 +147,16 @@ int csp_ax25_start(void) {
     return CSP_ERR_DRIVER;
   }
 
+  // sets a recv timout such that the rcthread can periodically check
+  // g_rx_stop_flag
+  struct timeval tv;
+  tv.tv_sec = 5;   /* in Secs Timeout */
+  tv.tv_usec = 0;  // Not init'ing this can cause strange errors
+  setsockopt(g_rxsock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv,
+             sizeof(struct timeval));
+
+  g_rx_stop_flag = false;
+
   /* launch reception thread... */
   csp_thread_create(&ax25_rx, (signed char *)"AX25-RX", 1000, NULL, 0,
                     &g_handle_rx);
@@ -161,6 +174,9 @@ int csp_ax25_stop(void) {
     csp_log_error("Failed to succesfully close CSP's AX25 layer tx socket.\n");
     return CSP_ERR_DRIVER;
   }
+
+  // Next verification rxthread should return
+  g_rx_stop_flag = true;
 
   /* csp_thread_join(&ax25_rx); */  // join is not yet implemented
   if (pthread_join(g_handle_rx, NULL) != 0) {
@@ -189,24 +205,33 @@ CSP_DEFINE_TASK(ax25_rx) {
     size = recvfrom(g_rxsock, buffer, AX25_MAX_LEN, 0, (struct sockaddr *)&src,
                     &srcs);
     if (size == -1) {
-      perror("Error in AX.25 frame reception..\n");
-      fprintf(stderr, "error in ax.25 fram reception..\n");
-      return NULL;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (g_rx_stop_flag) {
+          return CSP_TASK_RETURN;
+        } else {
+          continue;
+        }
+      } else {
+        csp_log_warn("Error in AX.25 frame reception..\n");
+        return CSP_TASK_RETURN;
+      }
     }
 
     ax25_address *dest_call_p, *src_call_p;
     dest_call_p = (ax25_address *)&buffer[KISS_HEADER_S];
     src_call_p = (ax25_address *)&buffer[KISS_HEADER_S + AX25_NCALL_S];
 
+    if (ax25_cmp(dest_call_p, &g_localcall_addr) != 0) {
+      //  csp_log_info("ax25_rx: received frame's dest callsign != my
+      //  callsign.\n"); //TODO remove this
+      continue;
+    }
+
+    // TODO remove this and use `src`
     char dest_s[7], src_s[7];
     memcpy(dest_s, ax25_ntoa(dest_call_p), sizeof(dest_s));
     memcpy(src_s, ax25_ntoa(src_call_p), sizeof(src_s));
     csp_log_info("ax25_rx: recv frame dest:%s src:%s\n", dest_s, src_s);
-
-    if (ax25_cmp(dest_call_p, &g_localcall_addr) != 0) {
-      csp_log_info("ax25_rx: received frame's dest callsign != my callsign.\n");
-      continue;
-    }
 
     /* offset eval */
     payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
