@@ -273,9 +273,6 @@ CSP_DEFINE_TASK(ax25_rx) {
   csp_packet_t *packet = NULL;
 
   while (1) {
-    /* clean the receive buffer */
-    memset(buffer, 0, AX25_MAX_LEN);
-
     /* hold for incomming packets */
     size = recvfrom(g_rxsock, buffer, AX25_MAX_LEN, 0, (struct sockaddr *)&src,
                     &srcs);
