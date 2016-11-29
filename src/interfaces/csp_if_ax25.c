@@ -26,9 +26,11 @@
 /* Functions used by rx thread/task */
 CSP_DEFINE_TASK(ax25_rx);
 
+/* Constants */
+
+
 /* Globals (but within this file only) */
 static int g_txsock = 0, g_rxsock = 0;
-static char *g_localcall = NULL;
 static ax25_address g_localcall_addr;
 static csp_thread_handle_t g_handle_rx;
 static bool g_rx_stop_flag = false;
@@ -63,7 +65,7 @@ int csp_ax25_init(char *ax25_port) {
 
   /* init csp_ax25_ctable */
   bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable));
-  if (csp_ax25_ctable_set(my_address, g_localcall)) return CSP_ERR_DRIVER;
+  if (csp_ax25_ctable_set(my_address, g_localcall_addr.ax25_call)) return CSP_ERR_DRIVER;
 
   return CSP_ERR_NONE;
 }
@@ -77,23 +79,22 @@ int csp_ax25_set_call(char *ax25_port) {
     return CSP_ERR_DRIVER;
   }
 
-  if (g_localcall != NULL) csp_free(g_localcall);
-
   /* get local callsign */
-  if ((g_localcall = ax25_config_get_addr(ax25_port)) == NULL) {
+  static char *localcall = NULL;
+  if ((localcall = ax25_config_get_addr(ax25_port)) == NULL) {
     csp_log_error("set_call(), invalid ax.25 port:%s\n", ax25_port);
     return CSP_ERR_DRIVER;
   }
 
   /* fill the g_src structure */
   memset(&g_src, 0, sizeof(g_src));
-  if ((g_slen = ax25_aton(g_localcall, &g_src)) == -1) {
+  if ((g_slen = ax25_aton(localcall, &g_src)) == -1) {
     csp_log_error("set_call(), Unable to convert source callsign \n");
     return CSP_ERR_DRIVER;
   }
 
   /* let's validate our local call */
-  if (ax25_aton_entry(g_localcall, localshifted) == -1) {
+  if (ax25_aton_entry(localcall, localshifted) == -1) {
     csp_log_error("set_call(), Can't shift local callsign: \n");
     return CSP_ERR_DRIVER;
   }
@@ -103,16 +104,14 @@ int csp_ax25_set_call(char *ax25_port) {
     return CSP_ERR_DRIVER;
   }
 
-  /* size_t call_len = strlen(g_localcall); */
+  /* size_t call_len = strlen(localcall); */
   /* for (int i = sizeof(ax25_address) - 1; i >= 0; i--) */
   /*   if (i < call_len) */
-  /*     g_localcall_addr.ax25_call[i] = g_localcall[i]; */
+  /*     g_localcall_addr.ax25_call[i] = localcall[i]; */
   /*   else */
   /*     g_localcall_addr.ax25_call[i] = ' '; */
 
-  /* memcpy(g_localcall_addr, g_localcall, sizeof(ax25_address)); */
-
-  ax25_aton_entry(g_localcall, g_localcall_addr.ax25_call);
+  /* ax25_aton_entry(g_localcall, g_localcall_addr.ax25_call); */
 
   return CSP_ERR_NONE;
 }
@@ -150,7 +149,7 @@ int csp_ax25_start(void) {
   // sets a recv timout such that the rcthread can periodically check
   // g_rx_stop_flag
   struct timeval tv;
-  tv.tv_sec = 5;   /* in Secs Timeout */
+  tv.tv_sec = 5;   /* in secs Timeout */
   tv.tv_usec = 0;  // Not init'ing this can cause strange errors
   setsockopt(g_rxsock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv,
              sizeof(struct timeval));
