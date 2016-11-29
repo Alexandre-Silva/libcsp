@@ -28,7 +28,6 @@ CSP_DEFINE_TASK(ax25_rx);
 
 /* Constants */
 
-
 /* Globals (but within this file only) */
 static int g_txsock = 0, g_rxsock = 0;
 static ax25_address g_localcall_addr;
@@ -65,7 +64,8 @@ int csp_ax25_init(char *ax25_port) {
 
   /* init csp_ax25_ctable */
   bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable));
-  if (csp_ax25_ctable_set(my_address, g_localcall_addr.ax25_call)) return CSP_ERR_DRIVER;
+  if (csp_ax25_ctable_set(my_address, g_localcall_addr.ax25_call))
+    return CSP_ERR_DRIVER;
 
   return CSP_ERR_NONE;
 }
@@ -188,12 +188,88 @@ int csp_ax25_stop(void) {
   return CSP_ERR_NONE;
 }
 
+// Checks if the dest addr of the ax25 frame is the local host
+static int check_ax25_dest(const char *buffer) {
+  ax25_address *dest_call_p, *src_call_p;
+  dest_call_p = (ax25_address *)&buffer[KISS_HEADER_S];
+  src_call_p = (ax25_address *)&buffer[KISS_HEADER_S + AX25_NCALL_S];
+
+  if (ax25_cmp(dest_call_p, &g_localcall_addr) != 0) {
+    //  csp_log_info("ax25_rx: received frame's dest callsign != my
+    //  callsign.\n");
+    return -1;
+  }
+
+  // TODO remove this and use `src`
+  char dest_s[7], src_s[7];
+  memcpy(dest_s, ax25_ntoa(dest_call_p), sizeof(dest_s));
+  memcpy(src_s, ax25_ntoa(src_call_p), sizeof(src_s));
+  csp_log_info("ax25_rx: recv frame dest:%s src:%s\n", dest_s, src_s);
+
+  return 0;
+}
+
+static csp_packet_t *frame2packet(const char *buffer, size_t size,
+                                  ax25_address *src_addr) {
+  size_t payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
+
+  /* alloc new packet */
+  // packet = csp_buffer_get(csp_if_ax25.mtu);
+  csp_packet_t *packet = csp_buffer_get(sizeof(csp_packet_t) + payload_s);
+  if (packet == NULL) {
+    csp_log_warn("ax25_rx: Cannot allocate packet memory\n");
+    return NULL;
+  }
+
+  /* fill the packet with incomming CSP data */
+  /* copy packet header and convert it into host endianess */
+  memcpy(&(packet->id.ext), &(buffer[AX25_HEADER_I_S]), CSP_HEADER_LENGTH);
+  packet->id.ext = csp_ntoh32(packet->id.ext);
+
+  if (packet->id.src > CSP_ID_HOST_MAX || packet->id.dst > CSP_ID_HOST_MAX) {
+    csp_free(packet);
+    csp_log_error("rx_task: received a packet with invalid control field.");
+    return NULL;
+  }
+
+  /* update ax25 call sign table */
+  memcpy(&csp_ax25_ctable[packet->id.src], src_addr, sizeof(ax25_address));
+
+  /* set the packet payload and size*/
+  memcpy(&(packet->data), &(buffer[CSP_HEADER_LENGTH + AX25_HEADER_I_S]),
+         payload_s);
+  packet->length = payload_s;
+
+  return packet;
+}
+
+static void deliver_packet(csp_packet_t *packet) {
+  /* The next validation filters the unknown packets, because the g_rxsock
+   * have very permissive filter (all UI Frames) later, the application must
+   * also filter, acording to the bound port.
+   *
+   * TODO remove this check to allow forwading of csp packets.
+   */
+  if (packet->id.dst != my_address) {
+    csp_log_warn(
+        "CSP Packet dropped: DST CSP_ID[%d] differ FROM local ADDR[%d]\n",
+        packet->id.dst, my_address);
+    csp_buffer_free(packet);
+  } else {
+    /* update stats */
+    csp_if_ax25.frame++;
+
+    /* inject packet into routing system */
+    csp_new_packet(packet, &csp_if_ax25,
+                   NULL);  // NULL -> Called from task (csp_interface.h)
+  }
+}
+
 CSP_DEFINE_TASK(ax25_rx) {
   struct full_sockaddr_ax25 src;
-  int size;
   socklen_t srcs = sizeof(src);
-  int payload_s;
   char buffer[AX25_MAX_LEN];
+  int size;
   csp_packet_t *packet = NULL;
 
   while (1) {
@@ -216,70 +292,15 @@ CSP_DEFINE_TASK(ax25_rx) {
       }
     }
 
-    ax25_address *dest_call_p, *src_call_p;
-    dest_call_p = (ax25_address *)&buffer[KISS_HEADER_S];
-    src_call_p = (ax25_address *)&buffer[KISS_HEADER_S + AX25_NCALL_S];
+    // Checks if ax25 destination addr matches the local callsign
+    if (check_ax25_dest(buffer)) continue;
 
-    if (ax25_cmp(dest_call_p, &g_localcall_addr) != 0) {
-      //  csp_log_info("ax25_rx: received frame's dest callsign != my
-      //  callsign.\n"); //TODO remove this
-      continue;
-    }
+    // extracts CSP packet from AX25 frame
+    packet = frame2packet(buffer, size, &src.fsa_ax25.sax25_call);
+    if (packet == NULL) continue;
 
-    // TODO remove this and use `src`
-    char dest_s[7], src_s[7];
-    memcpy(dest_s, ax25_ntoa(dest_call_p), sizeof(dest_s));
-    memcpy(src_s, ax25_ntoa(src_call_p), sizeof(src_s));
-    csp_log_info("ax25_rx: recv frame dest:%s src:%s\n", dest_s, src_s);
-
-    /* offset eval */
-    payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
-
-    /* alloc new packet */
-    // packet = csp_buffer_get(csp_if_ax25.mtu);
-    packet = csp_buffer_get(sizeof(csp_packet_t) + payload_s);
-    if (packet == NULL) {
-      csp_log_warn("ax25_rx: Cannot allocate packet memory\n");
-      continue;
-    }
-
-    /* fill the packet with incomming CSP data */
-    /* copy packet header and convert it into host endianess */
-    memcpy(&(packet->id.ext), &(buffer[AX25_HEADER_I_S]), CSP_HEADER_LENGTH);
-    packet->id.ext = csp_ntoh32(packet->id.ext);
-
-    if (packet->id.src > CSP_ID_HOST_MAX || packet->id.dst > CSP_ID_HOST_MAX) {
-      csp_free(packet);
-      csp_log_error("rx_task: received a packet with invalid control field.");
-      continue;
-    }
-
-    /* update ax25 call sign table */
-    memcpy(&csp_ax25_ctable[packet->id.src], src_call_p, sizeof(ax25_address));
-
-    /* set the packet payload and size*/
-    memcpy(&(packet->data), &(buffer[CSP_HEADER_LENGTH + AX25_HEADER_I_S]),
-           payload_s);
-    packet->length = payload_s;
-
-    /* The next validation filters the unknown packets,
-     * because the g_rxsock have very permissive filter (all UI Frames)
-     * later, the application must also filter, acording to
-     * the binded port.
-     */
-    if (packet->id.dst != my_address) {
-      csp_log_warn(
-          "CSP Packet dropped: DST CSP_ID[%d] differ FROM local ADDR[%d]\n",
-          packet->id.dst, my_address);
-      csp_buffer_free(packet);
-    } else {
-      /* update stats */
-      csp_if_ax25.frame++;
-
-      /* inject packet into routing system */
-      csp_new_packet(packet, &csp_if_ax25,
-                     NULL);  // NULL -> Called from task (csp_interface.h)
-    }
+    // Deliver the packet to libcsp proper
+    deliver_packet(packet);
   }
   return CSP_TASK_RETURN;
 }
