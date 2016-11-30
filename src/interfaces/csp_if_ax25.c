@@ -206,7 +206,8 @@ static int check_ax25_dest(const char *buffer) {
   src_call_p = (ax25_address *)&buffer[KISS_HEADER_S + AX25_NCALL_S];
 
   if (ax25_cmp(dest_call_p, g_localcall) != 0) {
-    /* csp_log_info("ax25_rx: received frame's dest callsign != my callsign.\n"); */
+    /* csp_log_info("ax25_rx: received frame's dest callsign != my
+     * callsign.\n"); */
     return -1;
   }
 
@@ -219,8 +220,7 @@ static int check_ax25_dest(const char *buffer) {
   return 0;
 }
 
-static csp_packet_t *frame2packet(const char *buffer, size_t size,
-                                  ax25_address *src_addr) {
+static csp_packet_t *frame_payload2packet(const char *buffer, size_t size) {
   size_t payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
 
   /* alloc new packet */
@@ -271,18 +271,26 @@ static void deliver_packet(csp_packet_t *packet) {
                    NULL);  // NULL -> Called from task (csp_interface.h)
   }
 }
+static void update_ctable(uint8_t csp_src, const char *buffer) {
+  ax25_address *ax25_src =
+      (ax25_address *)&buffer[KISS_HEADER_S + AX25_NCALL_S];
+
+  /* returns true if new value != old */
+  if (csp_ax25_ctable_set_(csp_src, ax25_src)) {
+    char *new_call = ax25_ntoa(csp_ax25_ctable_get_(csp_src));
+    csp_log_info("csp_ax25_ctable: %d --> %s\n", csp_src, new_call);
+  }
+}
 
 CSP_DEFINE_TASK(ax25_rx) {
-  struct full_sockaddr_ax25 src;
-  socklen_t srcs = sizeof(src);
   char buffer[AX25_MAX_LEN];
   int size;
   csp_packet_t *packet = NULL;
 
   while (1) {
     /* hold for incomming packets */
-    size = recvfrom(g_rxsock, buffer, AX25_MAX_LEN, 0, (struct sockaddr *)&src,
-                    &srcs);
+    size = recvfrom(g_rxsock, buffer, AX25_MAX_LEN, 0, NULL, NULL);
+
     if (size == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         if (g_rx_stop_flag) {
@@ -296,21 +304,16 @@ CSP_DEFINE_TASK(ax25_rx) {
       }
     }
 
-    // Checks if ax25 destination addr matches the local callsign
+    /* Checks if ax25 destination addr matches the local callsign. i.e. the
+       frame was sent to local host */
     if (check_ax25_dest(buffer)) continue;
 
-    // extracts CSP packet from AX25 frame
-    ax25_address *ax25_src = &src.fsa_ax25.sax25_call;
-    packet = frame2packet(buffer, size, ax25_src);
+    packet = frame_payload2packet(buffer, size);
     if (packet == NULL) continue;
 
-    /* update ax25 call sign table (returns true if new value != old)*/
-    if (csp_ax25_ctable_set_(packet->id.src, ax25_src)) {
-      char *new_call = ax25_ntoa(csp_ax25_ctable_get_(packet->id.src));
-      csp_log_info("csp_ax25_ctable: %d --> %s\n", packet->id.src, new_call);
-    }
+    update_ctable(packet->id.src, buffer);
 
-    // Deliver the packet to libcsp proper
+    /* Deliver the packet to libcsp proper */
     deliver_packet(packet);
   }
   return CSP_TASK_RETURN;
