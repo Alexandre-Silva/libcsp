@@ -22,6 +22,24 @@
 #include <pthread.h>  // only while csp_thread_join is not implemented
 
 /* Private functions */
+/**
+ * Returns a reference to the ax25 address stored in csp_ax25_ctable which maps
+ * from `csp_addr`.
+ *
+ * @param[in]: csp_addr, The key for which a next hop is needed.
+ * @returns: pointer to ax25_address in the table, even if the value is null.
+ */
+ax25_address *csp_ax25_ctable_get_(uint8_t csp_addr);
+
+/**
+ * Updates the AX25 next hop for `csp_addr` with `hop`.
+ *
+ * @param[in]: csp_addr, The key for which a next hop is to be set.
+ * @param[in]: hop, The new update ax25 next hop.
+ * @returns: true if the new ax25 addr was set, false if new value is equal to
+ * old one.
+ */
+bool csp_ax25_ctable_set_(uint8_t csp_addr, ax25_address *hop);
 
 /* Functions used by rx thread/task */
 CSP_DEFINE_TASK(ax25_rx);
@@ -36,7 +54,7 @@ static struct full_sockaddr_ax25 g_src;
 static int g_slen;
 
 // local callsign in network format (with depends in g_src)
-static ax25_address *g_localcall = &g_src.fsa_ax25.sax25_call.ax25_call;
+static ax25_address *g_localcall = &g_src.fsa_ax25.sax25_call;
 
 /** Interface definition */
 csp_iface_t csp_if_ax25 = {.name = "AX.25",
@@ -65,8 +83,8 @@ int csp_ax25_init(char *ax25_port) {
   if (csp_ax25_set_call(ax25_port) != CSP_ERR_NONE) return CSP_ERR_DRIVER;
 
   /* init csp_ax25_ctable */
-  bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable));
-  if (csp_ax25_ctable_set_(my_address, g_localcall)) return CSP_ERR_DRIVER;
+  bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable)); /* clean table */
+  csp_ax25_ctable_set_(my_address, g_localcall);/* set local csp addr --> ax25 call mapping */
 
   return CSP_ERR_NONE;
 }
@@ -224,9 +242,6 @@ static csp_packet_t *frame2packet(const char *buffer, size_t size,
     return NULL;
   }
 
-  /* update ax25 call sign table */
-  memcpy(&csp_ax25_ctable[packet->id.src], src_addr, sizeof(ax25_address));
-
   /* set the packet payload and size*/
   memcpy(&(packet->data), &(buffer[CSP_HEADER_LENGTH + AX25_HEADER_I_S]),
          payload_s);
@@ -285,8 +300,15 @@ CSP_DEFINE_TASK(ax25_rx) {
     if (check_ax25_dest(buffer)) continue;
 
     // extracts CSP packet from AX25 frame
-    packet = frame2packet(buffer, size, &src.fsa_ax25.sax25_call);
+    ax25_address *ax25_src = &src.fsa_ax25.sax25_call;
+    packet = frame2packet(buffer, size, ax25_src);
     if (packet == NULL) continue;
+
+    /* update ax25 call sign table (returns true if new value != old)*/
+    if (csp_ax25_ctable_set_(packet->id.src, ax25_src)) {
+      char *new_call = ax25_ntoa(csp_ax25_ctable_get_(packet->id.src));
+      csp_log_info("csp_ax25_ctable: %d --> %s\n", packet->id.src, new_call);
+    }
 
     // Deliver the packet to libcsp proper
     deliver_packet(packet);
@@ -294,20 +316,28 @@ CSP_DEFINE_TASK(ax25_rx) {
   return CSP_TASK_RETURN;
 }
 
-int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
-                uint32_t timeout) {
-  if (csp_if_ax25.mtu < packet->length) {
-    csp_log_error("ax25_tx(), packet->length is bigger than txbuf\n");
-    exit(-1);
-  }
+/**
+ * Discovers and fills `ax25_addr` with the AX25 address of the next hop host
+ * for the provided `csp_addr`
+ *
+ * @ruturns: 0 on success, -1 if CSP addr has no determined next hop;
+ */
+static int next_hop(struct sockaddr_ax25 *ax25_addr, uint8_t csp_addr) {
+  if (csp_ax25_ctable_is_null(csp_addr)) return -1;
 
-  struct sockaddr_ax25 dest_addr;
-  bzero((char *)&dest_addr, sizeof(dest_addr));
-  dest_addr.sax25_family = AF_AX25;
-  dest_addr.sax25_ndigis = 0;
-  memcpy(&dest_addr.sax25_call, &csp_ax25_ctable[packet->id.dst],
-         sizeof(ax25_address));
+  bzero((char *)ax25_addr, sizeof(ax25_addr));
+  ax25_addr->sax25_family = AF_AX25;
+  ax25_addr->sax25_ndigis = 0;
 
+  memcpy(&ax25_addr->sax25_call, (void *)csp_ax25_ctable_get_(csp_addr),
+         sizeof(ax25_addr->sax25_call));
+
+  return 0;
+}
+
+// Inserts the csp `packet` into `buffer` which will be the payload of the AX25
+// send().
+static size_t packet2frame(const csp_packet_t *packet, char *buffer) {
   //	printf("\n######## I will send the packet: \n");
   //	printf("-> Payload is: %s\n", packet->data);
   //	printf("-> Packet size (bytes) [ %d ]\n", packet->length);
@@ -317,26 +347,62 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
   // packet->id.dst, packet->id.dport, destcall);
   //	printf("#################################\n");
 
-  char txbuf[csp_if_ax25.mtu + CSP_HEADER_LENGTH];
-  bzero(txbuf, CSP_HEADER_LENGTH + packet->length);
+  bzero(buffer, CSP_HEADER_LENGTH + packet->length);
 
   /* fill the buffer with packet header (in network format) */
-  packet->id.ext = csp_hton32(packet->id.ext);
-  memcpy(txbuf, &packet->id.ext, CSP_HEADER_LENGTH);
+  uint32_t id_n = csp_hton32(packet->id.ext);
+  memcpy(buffer, &id_n, CSP_HEADER_LENGTH);
 
   /* copy the packet payload to the buffer */
-  memcpy(&txbuf[CSP_HEADER_LENGTH], &packet->data, packet->length);
+  memcpy(&buffer[CSP_HEADER_LENGTH], &packet->data, packet->length);
+
+  return packet->length + CSP_HEADER_LENGTH;
+}
+
+int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
+                uint32_t timeout) {
+  if (csp_if_ax25.mtu < packet->length) {
+    csp_log_error("ax25_tx(), packet->length is bigger than txbuf\n");
+    exit(-1);
+  }
+
+  if (csp_ax25_ctable_is_null(packet->id.dst)) {
+    csp_log_error("csp_ax25_tx(), No know next hop\n");
+    return CSP_ERR_TX;
+  }
+
+  struct sockaddr_ax25 dest_addr;
+  if (next_hop(&dest_addr, packet->id.dst)) return CSP_ERR_TX;
+
+  char buffer[csp_if_ax25.mtu + CSP_HEADER_LENGTH];
+  size_t length = packet2frame(packet, buffer);
 
   /* send the CSP packet inside our AX.25 frame through g_txsock FD */
-  if (sendto(g_txsock, txbuf, packet->length + CSP_HEADER_LENGTH, 0,
-             (struct sockaddr *)&dest_addr, sizeof(dest_addr)) == -1) {
-    csp_log_error("ax25_tx(), Unable to send AX.25 frame: \n");
+  if (sendto(g_txsock, buffer, length, 0, (struct sockaddr *)&dest_addr,
+             sizeof(dest_addr)) == -1) {
+    csp_log_error("csp_ax25_tx(), Unable to send AX.25 frame: \n");
     return CSP_ERR_TX;
   }
 
   /* release memory... */
   csp_buffer_free(packet);
   return CSP_ERR_NONE;
+}
+
+ax25_address *csp_ax25_ctable_get_(uint8_t csp_addr) {
+  return &csp_ax25_ctable[csp_addr];
+}
+
+bool csp_ax25_ctable_set_(uint8_t csp_addr, ax25_address *hop) {
+  ax25_address *old = csp_ax25_ctable_get_(csp_addr);
+  if (ax25_cmp(hop, old) == 0) return false;
+
+  memcpy(&csp_ax25_ctable[csp_addr], hop, sizeof(ax25_address));
+  return true;
+}
+
+bool csp_ax25_ctable_is_null(uint8_t csp_addr) {
+  return csp_ax25_ctable[csp_addr].ax25_call == 0;
 }
 
 int csp_ax25_ctable_set(uint8_t csp_addr, char *ax25_call) {
@@ -347,7 +413,7 @@ int csp_ax25_ctable_set(uint8_t csp_addr, char *ax25_call) {
     return CSP_ERR_DRIVER;
   }
 
-  char *old_call = ax25_ntoa(&csp_ax25_ctable[csp_addr]);
+  char *old_call = ax25_ntoa(csp_ax25_ctable_get_(csp_addr));
   csp_log_info("csp_ax25_ctable: %d --> %s , (was: %s)\n", csp_addr, ax25_call,
                old_call);
 
@@ -365,7 +431,7 @@ char *csp_ax25_ctable_get(uint8_t csp_addr) {
   }
 
   char *ret = NULL;
-  char *call = ax25_ntoa(&csp_ax25_ctable[csp_addr]);
+  char *call = ax25_ntoa(csp_ax25_ctable_get_(csp_addr));
   if (call != NULL) {
     size_t call_len = strlen(call) + 1;  // str size + '\0' char
     ret = csp_malloc(call_len);

@@ -7,8 +7,8 @@ extern "C" {
 
 #include <csp/csp.h>
 #include <csp/csp_interface.h>
-#include <stdint.h>
 #include <netax25/ax25.h>
+#include <stdint.h>
 
 // sizes of various fields
 #define KISS_HEADER_S 1                    //
@@ -26,7 +26,6 @@ extern csp_iface_t csp_if_ax25;
  * Only leaving it public for debugging convenience.
  */
 extern ax25_address csp_ax25_rtable[];
-
 
 #define AX25_MAX_LEN AX25_HEADER_I_S + CSP_HEADER_LENGTH + csp_if_ax25.mtu
 
@@ -70,6 +69,14 @@ int csp_ax25_start(void);
  * @returns: CSP_ERROR_NONE on success, CSP_ERROR_DRIVER if an error ocurred.
  */
 int csp_ax25_stop(void);
+
+/**
+ * Checks if for the given `csp_addr`, a AX25 next hop exists.
+ *
+ * @param[in]: csp_addr, The key who's value existence is beeing determined.
+ * @returns: pointer to ax25_address in the table. Null if does not exist.
+ */
+bool csp_ax25_ctable_is_null(uint8_t csp_addr);
 
 /** Sets a static mapping between a csp address and a ax25 callsign.
  *
