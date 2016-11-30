@@ -328,7 +328,7 @@ CSP_DEFINE_TASK(ax25_rx) {
 static int next_hop(struct sockaddr_ax25 *ax25_addr, uint8_t csp_addr) {
   if (csp_ax25_ctable_is_null(csp_addr)) return -1;
 
-  bzero((char *)ax25_addr, sizeof(ax25_addr));
+  bzero((char *)ax25_addr, sizeof(struct sockaddr_ax25));
   ax25_addr->sax25_family = AF_AX25;
   ax25_addr->sax25_ndigis = 0;
 
