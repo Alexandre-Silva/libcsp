@@ -84,7 +84,8 @@ int csp_ax25_init(char *ax25_port) {
 
   /* init csp_ax25_ctable */
   bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable)); /* clean table */
-  csp_ax25_ctable_set_(my_address, g_localcall);/* set local csp addr --> ax25 call mapping */
+  csp_ax25_ctable_set_(
+      my_address, g_localcall); /* set local csp addr --> ax25 call mapping */
 
   return CSP_ERR_NONE;
 }
@@ -205,8 +206,7 @@ static int check_ax25_dest(const char *buffer) {
   src_call_p = (ax25_address *)&buffer[KISS_HEADER_S + AX25_NCALL_S];
 
   if (ax25_cmp(dest_call_p, g_localcall) != 0) {
-    //  csp_log_info("ax25_rx: received frame's dest callsign != my
-    //  callsign.\n");
+    /* csp_log_info("ax25_rx: received frame's dest callsign != my callsign.\n"); */
     return -1;
   }
 
