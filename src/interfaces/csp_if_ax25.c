@@ -30,11 +30,13 @@ CSP_DEFINE_TASK(ax25_rx);
 
 /* Globals (but within this file only) */
 static int g_txsock = 0, g_rxsock = 0;
-static ax25_address g_localcall_addr;
 static csp_thread_handle_t g_handle_rx;
 static bool g_rx_stop_flag = false;
 static struct full_sockaddr_ax25 g_src;
 static int g_slen;
+
+// local callsign in network format (with depends in g_src)
+static ax25_address *g_localcall = &g_src.fsa_ax25.sax25_call.ax25_call;
 
 /** Interface definition */
 csp_iface_t csp_if_ax25 = {.name = "AX.25",
@@ -64,8 +66,7 @@ int csp_ax25_init(char *ax25_port) {
 
   /* init csp_ax25_ctable */
   bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable));
-  if (csp_ax25_ctable_set(my_address, g_localcall_addr.ax25_call))
-    return CSP_ERR_DRIVER;
+  if (csp_ax25_ctable_set_(my_address, g_localcall)) return CSP_ERR_DRIVER;
 
   return CSP_ERR_NONE;
 }
@@ -103,15 +104,6 @@ int csp_ax25_set_call(char *ax25_port) {
     csp_log_error("set_call(), Local callsign not valid\n");
     return CSP_ERR_DRIVER;
   }
-
-  /* size_t call_len = strlen(localcall); */
-  /* for (int i = sizeof(ax25_address) - 1; i >= 0; i--) */
-  /*   if (i < call_len) */
-  /*     g_localcall_addr.ax25_call[i] = localcall[i]; */
-  /*   else */
-  /*     g_localcall_addr.ax25_call[i] = ' '; */
-
-  /* ax25_aton_entry(g_localcall, g_localcall_addr.ax25_call); */
 
   return CSP_ERR_NONE;
 }
@@ -194,7 +186,7 @@ static int check_ax25_dest(const char *buffer) {
   dest_call_p = (ax25_address *)&buffer[KISS_HEADER_S];
   src_call_p = (ax25_address *)&buffer[KISS_HEADER_S + AX25_NCALL_S];
 
-  if (ax25_cmp(dest_call_p, &g_localcall_addr) != 0) {
+  if (ax25_cmp(dest_call_p, g_localcall) != 0) {
     //  csp_log_info("ax25_rx: received frame's dest callsign != my
     //  callsign.\n");
     return -1;
