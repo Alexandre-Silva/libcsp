@@ -221,7 +221,11 @@ static int check_ax25_dest(const char *buffer) {
 }
 
 static csp_packet_t *frame_payload2packet(const char *buffer, size_t size) {
-  size_t payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
+  ssize_t payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
+  if (payload_s < 0) {
+    csp_log_warn("ax25_rx: Received frame without csp header.");
+    return NULL;
+  }
 
   /* alloc new packet */
   // packet = csp_buffer_get(csp_if_ax25.mtu);
@@ -433,13 +437,17 @@ char *csp_ax25_ctable_get(uint8_t csp_addr) {
     return NULL;
   }
 
-  char *ret = NULL;
-  char *call = ax25_ntoa(csp_ax25_ctable_get_(csp_addr));
-  if (call != NULL) {
-    size_t call_len = strlen(call) + 1;  // str size + '\0' char
-    ret = csp_malloc(call_len);
-    memcpy(ret, call, call_len);
-  }
+  if (!csp_ax25_ctable_is_null(csp_addr)) {
+    char *ret = NULL;
+    char *call = ax25_ntoa(csp_ax25_ctable_get_(csp_addr));
+    if (call != NULL) {
+      size_t call_len = strlen(call) + 1;  // str size + '\0' char
+      ret = csp_malloc(call_len);
+      memcpy(ret, call, call_len);
+    }
+    return ret;
 
-  return ret;
+  } else {
+    return NULL;
+  }
 }
