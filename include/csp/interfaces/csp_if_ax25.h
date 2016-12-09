@@ -54,12 +54,23 @@ int csp_ax25_init(char *ax25_port);
  */
 int csp_ax25_set_call(char *ax25_port);
 
-/** Starts the csp_ax25 layer
+/** Starts the csp_ax25 layer using a UI type frames
  * Internaly binds the sockets using the callsign set via csp_ax25_set_call()
  * and starts rxtask.
  * @returns: CSP_ERROR_NONE on success, CSP_ERROR_DRIVER if an error ocurred.
  */
-int csp_ax25_start(void);
+int csp_ax25_start_ui(void);
+
+/** Starts the csp_ax25 layer using the provided socket fd (which should have
+ * a established connection)
+ *
+ * @note: In order to send csp packets to the peer, a route must be manually
+ * using csp_ax25_ctable_set().
+ * @param[in] connfd: file descriptor of the socket with established connection
+ * with node.
+ * @returns: CSP_ERROR_NONE on success, CSP_ERROR_DRIVER if an error ocurred.
+ */
+int csp_ax25_start_co(int connfd);
 
 /** Stops the csp_ax25 layer
  * This then frees the callsign to be used for other purposes.

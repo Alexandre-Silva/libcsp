@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
@@ -45,13 +46,21 @@ bool csp_ax25_ctable_set_(uint8_t csp_addr, ax25_address *hop);
 CSP_DEFINE_TASK(ax25_rx);
 
 /* Constants */
-
+typedef enum {
+  CSP_IF_AX25_NONE,
+  CSP_IF_AX25_UI,
+  CSP_IF_AX25_CO,  // connections oriented
+} if_mode;
 /* Globals (but within this file only) */
+
+/*  sockets */
 static int g_txsock = 0, g_rxsock = 0;
+
 static csp_thread_handle_t g_handle_rx;
 static bool g_rx_stop_flag = false;
 static struct full_sockaddr_ax25 g_src;
 static int g_slen;
+static if_mode g_mode = CSP_IF_AX25_NONE;
 
 // local callsign in network format (with depends in g_src)
 static ax25_address *g_localcall = &g_src.fsa_ax25.sax25_call;
@@ -83,9 +92,10 @@ int csp_ax25_init(char *ax25_port) {
   if (csp_ax25_set_call(ax25_port) != CSP_ERR_NONE) return CSP_ERR_DRIVER;
 
   /* init csp_ax25_ctable */
-  bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable)); /* clean table */
-  csp_ax25_ctable_set_(
-      my_address, g_localcall); /* set local csp addr --> ax25 call mapping */
+  bzero(csp_ax25_ctable, sizeof(csp_ax25_ctable));
+
+  /* set local csp addr --> ax25 call mapping */
+  csp_ax25_ctable_set_(my_address, g_localcall);
 
   return CSP_ERR_NONE;
 }
@@ -127,7 +137,7 @@ int csp_ax25_set_call(char *ax25_port) {
   return CSP_ERR_NONE;
 }
 
-int csp_ax25_start(void) {
+int csp_ax25_start_ui(void) {
   /* Prepare tx socket
    * 	PID=0xF0 =>  l3 protocol not specified..
    * 	http://www.tapr.org/pub_ax25.html#2.2.4
@@ -174,15 +184,64 @@ int csp_ax25_start(void) {
   return CSP_ERR_NONE;
 }
 
-int csp_ax25_stop(void) {
-  if (close(g_rxsock) != 0) {
-    csp_log_error("Failed to succesfully close CSP's AX25 layer rx socket.\n");
+int csp_ax25_start_co(int connfd) {
+  if (g_mode != CSP_IF_AX25_NONE) {
+    csp_log_error("AX25 layer is already initialized");
     return CSP_ERR_DRIVER;
   }
 
-  if (close(g_txsock) != 0) {
-    csp_log_error("Failed to succesfully close CSP's AX25 layer tx socket.\n");
+  if (connfd < 0) return CSP_ERR_DRIVER;
+
+  // set socket in non blocking mode
+  int flags = fcntl(connfd, F_GETFL, 0);
+  if (flags < 0) return CSP_ERR_DRIVER;
+  flags = flags | O_NONBLOCK;
+  if (fcntl(connfd, F_SETFL, flags)) return CSP_ERR_DRIVER;
+
+  g_rxsock = connfd;
+  g_txsock = connfd;
+  g_mode = CSP_IF_AX25_CO;
+
+  /* launch reception thread... */
+  if (csp_thread_create(&ax25_rx, (signed char *)"AX25-RX", 1000, NULL, 0,
+                        &g_handle_rx)) {
+    csp_log_error("AX25 layer failed to spawn task/thread\n");
     return CSP_ERR_DRIVER;
+  }
+
+  return CSP_ERR_NONE;
+}
+
+int csp_ax25_stop(void) {
+  switch (g_mode) {
+    case CSP_IF_AX25_NONE:
+      return CSP_ERR_NONE;
+
+    case CSP_IF_AX25_UI: {
+      if (close(g_rxsock) != 0) {
+        csp_log_error(
+            "Failed to succesfully close CSP's AX25 layer rx socket.\n");
+        return CSP_ERR_DRIVER;
+      }
+
+      if (close(g_txsock) != 0) {
+        csp_log_error(
+            "Failed to succesfully close CSP's AX25 layer tx socket.\n");
+        return CSP_ERR_DRIVER;
+      }
+
+      break;
+    }
+
+    case CSP_IF_AX25_CO: {
+      if (close(g_rxsock) != 0) {
+        csp_log_error(
+            "Failed to succesfully close CSP's AX25 layer connection "
+            "socket.\n");
+        return CSP_ERR_DRIVER;
+      }
+      break;
+    }
   }
 
   // Next verification rxthread should return
@@ -193,10 +252,56 @@ int csp_ax25_stop(void) {
     csp_log_error("Failed to succesfully terminate CSP:AX25 rx task.\n");
     return CSP_ERR_DRIVER;
   }
-
   printf("Joined rx task\n");
 
+  g_mode = CSP_IF_AX25_NONE;
   return CSP_ERR_NONE;
+}
+
+/**
+ * Handles the reception of data from the socket.
+ *
+ * @param[in,out] buffer: where received data (if any) will be stored. Must be
+ * at least AX25_MAX_LEN large.
+ * @returns: -2 on unexpected error, -1 if nothing was received, 0 if connection
+ * was lost. Values larger than 0 are the size of the data written to buffer.
+ */
+static ssize_t rx_recv(char *buffer) {
+  ssize_t size = 0;
+
+  switch (g_mode) {
+    case CSP_IF_AX25_NONE: {
+      csp_log_warn(
+          "AX25 layer rxtask is returning because layer mode is NONE\n");
+      return -2;
+    }
+
+    case CSP_IF_AX25_UI: {
+      size = recvfrom(g_rxsock, buffer, AX25_MAX_LEN, 0, NULL, NULL);
+      break;
+    }
+
+    case CSP_IF_AX25_CO: {
+      size = recv(g_rxsock, buffer, AX25_MAX_LEN, 0);
+      break;
+    }
+  }
+
+  if (size == 0) {
+    csp_log_info("AX25 layer rxsocket disconnected");
+
+  } else if (size == -1) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return -1;
+
+    } else {
+      perror("csp_if_ax25:");
+      csp_log_warn("Error in AX.25 frame reception..\n");
+      return -2;
+    }
+  }
+
+  return size;
 }
 
 // Checks if the dest addr of the ax25 frame is the local host
@@ -220,10 +325,24 @@ static int check_ax25_dest(const char *buffer) {
   return 0;
 }
 
-static csp_packet_t *frame_payload2packet(const char *buffer, size_t size) {
-  ssize_t payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
+static csp_packet_t *frame_payload2packet(const char *buffer, size_t size,
+                                          bool has_ax25_header) {
+  size_t header_offset = 0;
+  size_t payload_offset = 0;
+  ssize_t payload_s = 0;
+
+  if (has_ax25_header) {
+    header_offset = AX25_HEADER_I_S;
+    payload_offset = CSP_HEADER_LENGTH + AX25_HEADER_I_S;
+    payload_s = size - AX25_HEADER_I_S - CSP_HEADER_LENGTH;
+  } else {
+    header_offset = 0;
+    payload_offset = CSP_HEADER_LENGTH;
+    payload_s = size - CSP_HEADER_LENGTH;
+  }
+
   if (payload_s < 0) {
-    csp_log_warn("ax25_rx: Received frame without csp header.");
+    csp_log_warn("ax25_rx: Received invalid/corrupts frame.");
     return NULL;
   }
 
@@ -237,7 +356,7 @@ static csp_packet_t *frame_payload2packet(const char *buffer, size_t size) {
 
   /* fill the packet with incomming CSP data */
   /* copy packet header and convert it into host endianess */
-  memcpy(&(packet->id.ext), &(buffer[AX25_HEADER_I_S]), CSP_HEADER_LENGTH);
+  memcpy(&(packet->id.ext), &(buffer[header_offset]), CSP_HEADER_LENGTH);
   packet->id.ext = csp_ntoh32(packet->id.ext);
 
   if (packet->id.src > CSP_ID_HOST_MAX || packet->id.dst > CSP_ID_HOST_MAX) {
@@ -247,8 +366,7 @@ static csp_packet_t *frame_payload2packet(const char *buffer, size_t size) {
   }
 
   /* set the packet payload and size*/
-  memcpy(&(packet->data), &(buffer[CSP_HEADER_LENGTH + AX25_HEADER_I_S]),
-         payload_s);
+  memcpy(&(packet->data), &(buffer[payload_offset]), payload_s);
   packet->length = payload_s;
 
   return packet;
@@ -271,8 +389,8 @@ static void deliver_packet(csp_packet_t *packet) {
     csp_if_ax25.frame++;
 
     /* inject packet into routing system */
-    csp_new_packet(packet, &csp_if_ax25,
-                   NULL);  // NULL -> Called from task (csp_interface.h)
+    // NULL -> Called from task (csp_interface.h)
+    csp_new_packet(packet, &csp_if_ax25, NULL);
   }
 }
 static void update_ctable(uint8_t csp_src, const char *buffer) {
@@ -293,32 +411,37 @@ CSP_DEFINE_TASK(ax25_rx) {
 
   while (1) {
     /* hold for incomming packets */
-    size = recvfrom(g_rxsock, buffer, AX25_MAX_LEN, 0, NULL, NULL);
+    size = rx_recv(buffer);
 
-    if (size == -1) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        if (g_rx_stop_flag) {
-          return CSP_TASK_RETURN;
-        } else {
-          continue;
-        }
-      } else {
-        csp_log_warn("Error in AX.25 frame reception..\n");
+    switch (size) {
+      case -2:
         return CSP_TASK_RETURN;
+
+      case -1:
+        // TODO remove this. workaround for libax25 being half-duplex on send()
+        // and recv()
+        sleep(1);
+        continue;
+
+      case 0:
+        return CSP_TASK_RETURN;
+
+      default: {
+        /* Checks if ax25 destination addr matches the local callsign. i.e. the
+           frame was sent to local host */
+        if (g_mode == CSP_IF_AX25_UI && check_ax25_dest(buffer)) continue;
+
+        // in CO mode, and size is 0 (i.e. sock disconnected) a empty csp packet
+        // will be produced and delivered.
+        packet = frame_payload2packet(buffer, size, g_mode == CSP_IF_AX25_UI);
+        if (packet == NULL) continue;
+
+        if (g_mode == CSP_IF_AX25_UI) update_ctable(packet->id.src, buffer);
+
+        /* Deliver the packet to libcsp proper */
+        deliver_packet(packet);
       }
     }
-
-    /* Checks if ax25 destination addr matches the local callsign. i.e. the
-       frame was sent to local host */
-    if (check_ax25_dest(buffer)) continue;
-
-    packet = frame_payload2packet(buffer, size);
-    if (packet == NULL) continue;
-
-    update_ctable(packet->id.src, buffer);
-
-    /* Deliver the packet to libcsp proper */
-    deliver_packet(packet);
   }
   return CSP_TASK_RETURN;
 }
@@ -368,6 +491,12 @@ static size_t packet2frame(const csp_packet_t *packet, char *buffer) {
 
 int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
                 uint32_t timeout) {
+  if (g_mode == CSP_IF_AX25_NONE) {
+    csp_log_error(
+        "ax25_tx(), Cannot send frame when AX25 layer is not running.\n");
+    return CSP_ERR_TX;
+  }
+
   if (csp_if_ax25.mtu < packet->length) {
     csp_log_error("ax25_tx(), packet->length is bigger than txbuf\n");
     exit(-1);
@@ -378,20 +507,30 @@ int csp_ax25_tx(struct csp_iface_s *interface, csp_packet_t *packet,
     return CSP_ERR_TX;
   }
 
+  /* get next node's ax25 address via csp addr */
   struct sockaddr_ax25 dest_addr;
-  if (next_hop(&dest_addr, packet->id.dst)) return CSP_ERR_TX;
+  if (g_mode == CSP_IF_AX25_UI) {
+    if (next_hop(&dest_addr, packet->id.dst)) return CSP_ERR_TX;
+  }
 
   char buffer[csp_if_ax25.mtu + CSP_HEADER_LENGTH];
   size_t length = packet2frame(packet, buffer);
 
-  /* send the CSP packet inside our AX.25 frame through g_txsock FD */
-  if (sendto(g_txsock, buffer, length, 0, (struct sockaddr *)&dest_addr,
-             sizeof(dest_addr)) == -1) {
-    csp_log_error("csp_ax25_tx(), Unable to send AX.25 frame: \n");
-    return CSP_ERR_TX;
+  if (g_mode == CSP_IF_AX25_UI) {
+    /* send the CSP packet inside our AX.25 frame through g_txsock FD */
+    /* note: sento's dest_ddr field is ignored for connection-mode sockets */
+    if (sendto(g_txsock, buffer, length, 0, (struct sockaddr *)&dest_addr,
+               sizeof(dest_addr)) == -1) {
+      csp_log_error("csp_ax25_tx(), Unable to send AX.25 frame: \n");
+      return CSP_ERR_TX;
+    }
+  } else {
+    if (send(g_txsock, buffer, length, 0) == -1) {
+      csp_log_error("csp_ax25_tx(), Unable to send AX.25 frame: \n");
+      return CSP_ERR_TX;
+    }
   }
 
-  /* release memory... */
   csp_buffer_free(packet);
   return CSP_ERR_NONE;
 }
