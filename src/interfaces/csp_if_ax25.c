@@ -372,6 +372,24 @@ static csp_packet_t *frame_payload2packet(const char *buffer, size_t size,
   return packet;
 }
 
+static csp_packet_t *new_empty_packet(void) {
+  csp_packet_t *packet = csp_buffer_get(sizeof(csp_packet_t));
+  if (packet == NULL) {
+    csp_log_warn("ax25_rx: Cannot allocate packet memory\n");
+    return NULL;
+  }
+
+  packet->length = 0;
+  packet->id.ext = 0;  // initialize
+
+  packet->id.pri = 2;
+
+  packet->id.dst = my_address;
+  packet->id.dport = CSP_ANY;
+
+  return packet;
+}
+
 static void deliver_packet(csp_packet_t *packet) {
   /* The next validation filters the unknown packets, because the g_rxsock
    * have very permissive filter (all UI Frames) later, the application must
@@ -406,7 +424,7 @@ static void update_ctable(uint8_t csp_src, const char *buffer) {
 
 CSP_DEFINE_TASK(ax25_rx) {
   char buffer[AX25_MAX_LEN];
-  int size;
+  ssize_t size;
   csp_packet_t *packet = NULL;
 
   while (1) {
@@ -414,17 +432,20 @@ CSP_DEFINE_TASK(ax25_rx) {
     size = rx_recv(buffer);
 
     switch (size) {
+      // Connection lost (normaly i.e 0, or forcefully i.e. -2)
       case -2:
+      case 0: {
+        packet = new_empty_packet();
+        if (packet) deliver_packet(packet);
         return CSP_TASK_RETURN;
+      }
 
+      // No data to be 'recv()'ied. But socket in non-blocking mode so...
       case -1:
         // TODO remove this. workaround for libax25 being half-duplex on send()
         // and recv()
         sleep(1);
         continue;
-
-      case 0:
-        return CSP_TASK_RETURN;
 
       default: {
         /* Checks if ax25 destination addr matches the local callsign. i.e. the
