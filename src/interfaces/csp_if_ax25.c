@@ -61,6 +61,7 @@ static bool g_rx_stop_flag = false;
 static struct full_sockaddr_ax25 g_src;
 static int g_slen;
 static if_mode g_mode = CSP_IF_AX25_NONE;
+static uint8_t g_nc_notify_port = 0;
 
 // local callsign in network format (with depends in g_src)
 static ax25_address *g_localcall = &g_src.fsa_ax25.sax25_call;
@@ -184,7 +185,7 @@ int csp_ax25_start_ui(void) {
   return CSP_ERR_NONE;
 }
 
-int csp_ax25_start_co(int connfd) {
+int csp_ax25_start_co(int connfd, uint8_t nc_notify_port) {
   if (g_mode != CSP_IF_AX25_NONE) {
     csp_log_error("AX25 layer is already initialized");
     return CSP_ERR_DRIVER;
@@ -201,6 +202,7 @@ int csp_ax25_start_co(int connfd) {
   g_rxsock = connfd;
   g_txsock = connfd;
   g_mode = CSP_IF_AX25_CO;
+  g_nc_notify_port = nc_notify_port;
 
   /* launch reception thread... */
   if (csp_thread_create(&ax25_rx, (signed char *)"AX25-RX", 1000, NULL, 0,
@@ -385,7 +387,7 @@ static csp_packet_t *new_empty_packet(void) {
   packet->id.pri = 2;
 
   packet->id.dst = my_address;
-  packet->id.dport = CSP_ANY;
+  packet->id.dport = g_nc_notify_port;
 
   return packet;
 }

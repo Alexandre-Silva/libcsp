@@ -68,9 +68,11 @@ int csp_ax25_start_ui(void);
  * using csp_ax25_ctable_set().
  * @param[in] connfd: file descriptor of the socket with established connection
  * with node.
+ * @param[in] nc_notify_port: CSP port to where a 0 length packet will be
+ * sent if the underlying AX25 socket is disconnected.
  * @returns: CSP_ERROR_NONE on success, CSP_ERROR_DRIVER if an error ocurred.
  */
-int csp_ax25_start_co(int connfd);
+int csp_ax25_start_co(int connfd, uint8_t nc_notify_port);
 
 /** Stops the csp_ax25 layer
  * This then frees the callsign to be used for other purposes.
