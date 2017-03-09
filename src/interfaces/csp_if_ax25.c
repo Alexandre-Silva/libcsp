@@ -463,6 +463,7 @@ CSP_DEFINE_TASK(ax25_rx) {
 
         /* Deliver the packet to libcsp proper */
         deliver_packet(packet);
+        break;
       }
     }
   }

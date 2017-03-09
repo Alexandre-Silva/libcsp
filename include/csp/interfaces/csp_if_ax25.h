@@ -22,7 +22,8 @@ extern "C" {
 extern csp_iface_t csp_if_ax25;
 
 /** CSP Host addr to  for layer 2 -- AX25 callsign table
- * Never use this directly, only interact with it using.
+ * Never use this directly, only interact with it using csp_ax25_ctable_*,
+ * functions.
  * Only leaving it public for debugging convenience.
  */
 extern ax25_address csp_ax25_rtable[];
