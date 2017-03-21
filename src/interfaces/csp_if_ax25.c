@@ -203,6 +203,7 @@ int csp_ax25_start_co(int connfd, uint8_t nc_notify_port) {
   g_txsock = connfd;
   g_mode = CSP_IF_AX25_CO;
   g_nc_notify_port = nc_notify_port;
+  g_rx_stop_flag = false;
 
   /* launch reception thread... */
   if (csp_thread_create(&ax25_rx, (signed char *)"AX25-RX", 1000, NULL, 0,
@@ -236,12 +237,12 @@ int csp_ax25_stop(void) {
     }
 
     case CSP_IF_AX25_CO: {
-      if (close(g_rxsock) != 0) {
-        csp_log_error(
-            "Failed to succesfully close CSP's AX25 layer connection "
-            "socket.\n");
-        return CSP_ERR_DRIVER;
-      }
+      /* if (close(g_rxsock) != 0) { */
+      /*   csp_log_error( */
+      /*       "Failed to succesfully close CSP's AX25 layer connection " */
+      /*       "socket.\n"); */
+      /*   return CSP_ERR_DRIVER; */
+      /* } */
       break;
     }
   }
@@ -447,7 +448,14 @@ CSP_DEFINE_TASK(ax25_rx) {
         // TODO remove this. workaround for libax25 being half-duplex on send()
         // and recv()
         sleep(1);
-        continue;
+
+        if (g_rx_stop_flag) {
+          packet = new_empty_packet();
+          if (packet) deliver_packet(packet);
+          return CSP_TASK_RETURN;
+        }
+
+        break;
 
       default: {
         /* Checks if ax25 destination addr matches the local callsign. i.e. the
@@ -467,6 +475,7 @@ CSP_DEFINE_TASK(ax25_rx) {
       }
     }
   }
+
   return CSP_TASK_RETURN;
 }
 
