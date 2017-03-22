@@ -255,7 +255,8 @@ int csp_ax25_stop(void) {
     csp_log_error("Failed to succesfully terminate CSP:AX25 rx task.\n");
     return CSP_ERR_DRIVER;
   }
-  printf("Joined rx task\n");
+
+  csp_log_info("Joined rx task\n");
 
   g_mode = CSP_IF_AX25_NONE;
   return CSP_ERR_NONE;
@@ -430,6 +431,8 @@ CSP_DEFINE_TASK(ax25_rx) {
   ssize_t size;
   csp_packet_t *packet = NULL;
 
+  csp_log_info("Started rx task\n");
+
   while (1) {
     /* hold for incomming packets */
     size = rx_recv(buffer);
@@ -440,7 +443,7 @@ CSP_DEFINE_TASK(ax25_rx) {
       case 0: {
         packet = new_empty_packet();
         if (packet) deliver_packet(packet);
-        return CSP_TASK_RETURN; // return from task
+        return CSP_TASK_RETURN;  // return from task
       }
 
       // No data to be 'recv()'ied. But socket in non-blocking mode so...
