@@ -440,7 +440,7 @@ CSP_DEFINE_TASK(ax25_rx) {
       case 0: {
         packet = new_empty_packet();
         if (packet) deliver_packet(packet);
-        return CSP_TASK_RETURN;
+        return CSP_TASK_RETURN; // return from task
       }
 
       // No data to be 'recv()'ied. But socket in non-blocking mode so...
