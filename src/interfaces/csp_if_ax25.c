@@ -216,6 +216,8 @@ int csp_ax25_start_co(int connfd, uint8_t nc_notify_port) {
 }
 
 int csp_ax25_stop(void) {
+  csp_log_info("Stopping libCSP's AX25 layer (Joining rx task)\n");
+
   switch (g_mode) {
     case CSP_IF_AX25_NONE:
       return CSP_ERR_NONE;
@@ -291,21 +293,23 @@ static ssize_t rx_recv(char *buffer) {
     }
   }
 
-  if (size == 0) {
-    csp_log_info("AX25 layer rxsocket disconnected");
+  if (size > 0) {
+    return size;
 
-  } else if (size == -1) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return -1;
+  } else if (size == 0) {
+    csp_log_info("AX25 layer rxsocket disconnected\n");
+    return 0;
 
-    } else {
-      perror("csp_if_ax25:");
-      csp_log_warn("Error in AX.25 frame reception..\n");
-      return -2;
-    }
+  } else if (size == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    return -1;
+
+  } else if (size <= -1) {
+    perror("csp_if_ax25:");
+    csp_log_warn("Error in AX.25 frame reception..\n");
+    return -2;
   }
 
-  return size;
+  return -2;  // this should never happend
 }
 
 // Checks if the dest addr of the ax25 frame is the local host
@@ -441,9 +445,7 @@ CSP_DEFINE_TASK(ax25_rx) {
       // Connection lost (normaly i.e 0, or forcefully i.e. -2)
       case -2:
       case 0: {
-        packet = new_empty_packet();
-        if (packet) deliver_packet(packet);
-        return CSP_TASK_RETURN;  // return from task
+        goto ax25_rx_out;
       }
 
       // No data to be 'recv()'ied. But socket in non-blocking mode so...
@@ -453,9 +455,7 @@ CSP_DEFINE_TASK(ax25_rx) {
         sleep(1);
 
         if (g_rx_stop_flag) {
-          packet = new_empty_packet();
-          if (packet) deliver_packet(packet);
-          return CSP_TASK_RETURN;
+          goto ax25_rx_out;
         }
 
         break;
@@ -478,6 +478,12 @@ CSP_DEFINE_TASK(ax25_rx) {
       }
     }
   }
+
+ax25_rx_out:
+  packet = new_empty_packet();
+  if (packet) deliver_packet(packet);
+
+  csp_log_info("Stopped rx task\n");
 
   return CSP_TASK_RETURN;
 }
